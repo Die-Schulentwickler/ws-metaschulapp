@@ -1,95 +1,13 @@
+# Use the latest 2.1 version of CircleCI pipeline process engine. See: https://circleci.com/docs/2.0/configuration-reference
 version: 2.1
-
-jobs:
-    build-and-deploy:
-        docker:
-            - image: circleci/buildpack-deps:stretch
-
-        working_directory: ~/repo
-
-        steps:
-            - add_ssh_keys:
-                  fingerprints:
-                      - "9c:55:04:22:6f:0c:30:c9:1e:da:ae:dd:aa:81:8a:86"
-
-            - checkout
-            - setup_remote_docker
-            # enable docker_layer_caching: true on better plan
-
-            - restore_cache:
-                  keys:
-                      - v1-dependencies-{{ checksum "package.json" }}
-                      # fallback to using the latest cache if no exact match is found
-                      - v1-dependencies-
-
-            - run:
-                  name: Install dependencies
-                  command: |
-                      sudo apt-get install awscli
-                      sudo apt-get install python3-pip
-                      sudo pip3 install --upgrade awscli
-
-            - run:
-                  name: Build .env file
-                  command: |
-                      cat >.env \<<EOT
-                      MONGO_HOSTNAME=db
-                      MONGO_USERNAME=admin
-                      MONGO_PASSWORD=$(echo ${MONGO_PASSWORD})
-                      MONGO_PORT=27017
-                      MONGO_DB=ws_metalearnapp
-                      JWT_SECRET=$(echo ${JWT_SECRET})
-                      FRONT_END_URL=https://www.metaschulapp.de
-                      DOMAIN=.metaschulapp.de
-                      FACEBOOK_LOGIN_KEY=$(echo ${FACEBOOK_LOGIN_KEY})
-                      GOOGLE_LOGIN_KEY=$(echo ${GOOGLE_LOGIN_KEY})
-                      EOT
-
-            - run:
-                  name: Copy env file to production
-                  command: |
-                      if [ "${CIRCLE_BRANCH}" == "production" ]; then
-                        scp -o StrictHostKeyChecking=no .env ubuntu@3.121.195.172:/home/ubuntu/ws-metaschulapp
-                      else
-                        echo "NO DEPLOY (only deploying in staging and production)"
-                      fi
-
-            - run:
-                  name: Build and push Docker Image
-                  command: |
-                      docker-compose build
-                      $(aws ecr get-login --no-include-email)
-                      docker-compose push
-            - run:
-                  name: SSH into EC2 and pull image
-                  command: |
-                      if [ "${CIRCLE_BRANCH}" == "production" ]; then
-                        ssh -o StrictHostKeyChecking=no ubuntu@3.121.195.172 \<< EOF
-                        cd ws-metaschulapp
-                        git fetch --all
-                        git reset --hard origin/master
-                        sudo $(aws ecr get-login --no-include-email --region eu-central-1)
-                        sudo docker rmi $(sudo docker images -a -q)
-                        sudo docker system prune --volumes --force
-                        sudo docker-compose pull
-                        sudo docker-compose down
-                        sudo docker-compose up -d
-                      EOF
-                      else
-                        echo "NO DEPLOY (only deploying in staging and production)"
-                      fi
-            - save_cache:
-                  paths:
-                      - node_modules
-                  key: v1-dependencies-{{ checksum "package.json" }}
-
+# Use a package of configuration called an orb.
+orbs:
+  # Declare a dependency on the welcome-orb
+  welcome: circleci/welcome-orb@0.4.1
+# Orchestrate or schedule a set of jobs
 workflows:
-    version: 2.1
-    build-and-deploy-workflow:
-        jobs:
-            - build-and-deploy:
-                  filters:
-                      branches:
-                          only:
-                              - production
-                  context: AWS
+  # Name the workflow "welcome"
+  welcome:
+    # Run the welcome/run job in its own container
+    jobs:
+      - welcome/run
